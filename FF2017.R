@@ -17,7 +17,7 @@ for (pos in positions){
     }
 }
 
-roster_no = c("QB"=24, "RB"=56, "WR"=56, "TE"=20)
+roster_no = c("QB"=20, "RB"=40, "WR"=40, "TE"=20)
 replace_value = c("QB"=NA, "RB"=NA, "WR"=NA, "TE"=NA)
 for (pos in positions){
     replace_value[pos] = mean(filter(df2, position==pos)$points[(roster_no[pos]+1):(roster_no[pos]+6)])
@@ -31,7 +31,7 @@ df3 <- df2 %>% filter(vor>0)
 df3 <- remove_rownames(df3)
 df3 <- column_to_rownames(df3, var="player")
 
-roster_dollars <- (200 * 12) 
+roster_dollars <- (200 * 10) 
 total_vor <- sum(df3$vor)
 vor_value <- roster_dollars / total_vor
 df3$value <- round(df3$vor * vor_value, 0)
@@ -39,7 +39,7 @@ df3$value <- round(df3$vor * vor_value, 0)
 df3$group = rep(0, nrow(df3))
 for (pos in positions){
     tmp <- df3 %>% filter(position == pos) %>% select(value)
-    centers <- kmeans(tmp, 4, nstart = 25)$center
+    centers <- kmeans(tmp, 3, nstart = 25)$center
     centers <- sort(centers, decreasing = TRUE)
     clust <- kmeans(tmp, centers = centers)$cluster
     df3[df3$position==pos, ]$group <- clust
@@ -53,7 +53,11 @@ for (i in 1:nrow(df3)){
 }
 
 # recalibrate values
-calibration <- starter_dollars / sum(df3$value)
+calibration <- roster_dollars / sum(df3$value)
 df3$value <- round(df3$value * calibration, 0)
 
 write.csv(df3, "~/Desktop/FF.csv", row.names=T)
+
+df4 <- df3 %>%
+    group_by(position, group) %>%
+    dplyr::summarize(avg_value = mean(value), bottom=min(value))

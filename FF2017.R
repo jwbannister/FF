@@ -1,70 +1,59 @@
 library(ggplot2)
 library(tidyverse)
-source("functions.R")
+library(ffanalytics)
+source("~/code/FF/functions.R")
 
-df1 <- read.csv("ffa_customrankings2017-0.csv",   
-                        stringsAsFactors = FALSE)
-df2 <- df1 %>% select(player, playerposition, points, lower, upper, dropoff, 
-                      tier, risk)
-keepers <- c("LeVeon Bell"=43, 
-                  "Alshon Jeffery"=14, 
-                  "Devonta Freeman"=15,
-                  "Carlos Hyde"=21, 
-                  "Melvin Gordon"=18, 
-                  "LeGarrette Blount"=13, 
-                  "Isaiah Crowell"=10,
-                  "Jordan Howard"=23, 
-                  "Drew Brees"=13,
-                  "Michael Thomas"=6,
-                  "Michael Crabtree"=11)
-names(keepers)[!(names(keepers) %in% df2$player)]
-df3 <- filter(df2, !(player %in% names(keepers)))
-df3 <- df3 %>% group_by(playerposition) %>% 
-    mutate(posrank = rank(-points))
-
-p1 <- ggplot(df3, aes(x=posrank, y=tier, group=playerposition)) +
-    geom_path(aes(color=playerposition)) + xlim(0, 50)
-replace_rank <- c("QB"=15, "RB"=40, "WR"=40, "TE"=12)
-replace_value <- c("QB"=filter(df3, playerposition=="QB" & 
-                               posrank==replace_rank[["QB"]])$points, 
-                   "RB"=filter(df3, playerposition=="RB" & 
-                               posrank==replace_rank[["RB"]])$points,
-                   "WR"=filter(df3, playerposition=="WR" & 
-                               posrank==replace_rank[["WR"]])$points,
-                   "TE"=filter(df3, playerposition=="TE" & 
-                               posrank==replace_rank[["TE"]])$points)
-df3$vor <- rep(NA, nrow(df3))
-for (i in 1:nrow(df3)){
-    df3$vor[i] <- df3$points[i] - replace_value[[df3$playerposition[i]]]
+positions <- c("QB", "RB", "WR", "TE")
+my_scrape <- scrape_data(src = c("FantasyPros"), pos = positions, season = 2020, week = 0)
+for (pos in positions){
+    if (exists("df2")){
+        tmp <- select(my_scrape[[pos]], player, points=site_pts)
+        tmp$position <- rep(pos, nrow(tmp))
+        df2 <- rbind(df2, tmp)
+    } else{
+        tmp <- select(my_scrape[[pos]], player, points=site_pts)
+        tmp$position <- rep(pos, nrow(tmp))
+        df2 <- tmp
+    }
 }
 
-starter_dollars <- (200 * 12) - sum(keepers) - (12 * 16)
-starters <- rbind(filter(df3, playerposition=="QB")[1:12, ],
-                  filter(df3, playerposition=="RB")[1:30, ],
-                  filter(df3, playerposition=="WR")[1:30, ],
-                  filter(df3, playerposition=="TE")[1:12, ])
+roster_no = c("QB"=24, "RB"=56, "WR"=56, "TE"=20)
+replace_value = c("QB"=NA, "RB"=NA, "WR"=NA, "TE"=NA)
+for (pos in positions){
+    replace_value[pos] = mean(filter(df2, position==pos)$points[(roster_no[pos]+1):(roster_no[pos]+6)])
+}
+df2$vor = rep(NA, nrow(df2))
+for (i in c(1:nrow(df2))){
+    df2$vor[i] <- df2$points[i] - replace_value[df2$position[i]]
+}
 
-total_vor <- sum(starters$vor)
-vor_value <- starter_dollars / total_vor
-starters$value <- starters$vor * vor_value
-starters$value <- starters$value * (1 + ((.066) * (5 - starters$risk)))
-board <- group_by(starters, playerposition) %>% 
-  arrange(desc(value)) %>% 
-  select(player, playerposition, posrank, tier, risk, vor, value)
-board$risk <- round(board$risk, 2) 
-board$vor <- round(board$vor, 2) 
-board$value <- round(board$value, 0) 
+df3 <- df2 %>% filter(vor>0) 
+df3 <- remove_rownames(df3)
+df3 <- column_to_rownames(df3, var="player")
+
+roster_dollars <- (200 * 12) 
+total_vor <- sum(df3$vor)
+vor_value <- roster_dollars / total_vor
+df3$value <- round(df3$vor * vor_value, 0)
+
+df3$group = rep(0, nrow(df3))
+for (pos in positions){
+    tmp <- df3 %>% filter(position == pos) %>% select(value)
+    centers <- kmeans(tmp, 4, nstart = 25)$center
+    centers <- sort(centers, decreasing = TRUE)
+    clust <- kmeans(tmp, centers = centers)$cluster
+    df3[df3$position==pos, ]$group <- clust
+}
+
 # add in value premium for elite players
-for (i in 1:nrow(board)){
- if (board$posrank[i]<=4){
-   board$value[i] <- board$value[i] * 1.1
+for (i in 1:nrow(df3)){
+ if (df3$group[i]==1){
+   df3$value[i] <- df3$value[i] * 1.1
  }
 }
+
 # recalibrate values
-calibration <- starter_dollars / sum(board$value)
-board$value <- round(board$value * calibration, 0)
-board$id <- seq(1, nrow(board), 1)
+calibration <- starter_dollars / sum(df3$value)
+df3$value <- round(df3$value * calibration, 0)
 
-drafted <- data.frame(id=c(), player=c(), cost=c())
-id <- c()
-
+write.csv(df3, "~/Desktop/FF.csv", row.names=T)
